@@ -63,9 +63,10 @@ document.addEventListener('DOMContentLoaded', () => {
         statusText.textContent = currentStatus;
         statusLoader.style.display = isLoading ? 'block' : 'none';
         
-        userInput.disabled = !selectedVoice || isLoading;
-        sendButton.disabled = !selectedVoice || isLoading || !userInput.value.trim();
-        micButton.disabled = !selectedVoice || isLoading;
+        const hasSelection = !!selectedVoice;
+        userInput.disabled = !hasSelection || isLoading;
+        sendButton.disabled = !hasSelection || isLoading || !userInput.value.trim();
+        micButton.disabled = !hasSelection || isLoading;
 
         if (isListening) {
             micButton.classList.add('listening');
@@ -88,24 +89,29 @@ document.addEventListener('DOMContentLoaded', () => {
     ];
 
     async function setupInitialVoices(existingVoices) {
-        console.log("Checking if voices need to be initialized...");
+        console.log("Checking if initial voices need to be created...");
+        let createdCount = 0;
         for (const voice of INITIAL_VOICES) {
             const existing = existingVoices.find(v => v.name === voice.name);
             if (!existing) {
-                console.log(`Initializing voice: ${voice.name}`);
+                console.log(`Creating voice record for: ${voice.name}`);
                 try {
                     const response = await fetch(voice.file);
                     const blob = await response.blob();
                     const file = new File([blob], voice.file.split('/').pop(), { type: blob.type });
                     const url = await websim.upload(file);
                     await room.collection('voice_v1').create({ name: voice.name, url });
-                    console.log(`Created voice: ${voice.name}`);
+                    createdCount++;
                 } catch (error) {
                     console.error(`Failed to initialize voice ${voice.name}:`, error);
                 }
             }
         }
-        console.log("Voice check complete.");
+        if (createdCount > 0) {
+            console.log(`Created ${createdCount} new voice(s).`);
+        } else {
+            console.log("All initial voices already exist.");
+        }
     }
 
     // --- Core Logic ---
@@ -121,7 +127,12 @@ document.addEventListener('DOMContentLoaded', () => {
         if (recognitionRef) {
             recognitionRef.stop();
         }
-        updateStatus("Paused. Select a voice to resume.", false);
+        if (currentStatus === "Select a voice to begin.") {
+             // When called initially before a voice is selected.
+            updateStatus("Select a voice to begin.", false);
+        } else {
+            updateStatus("Paused. Select a voice to resume.", false);
+        }
     };
 
     const generateAndPlayResponse = async (isUserInitiated = false) => {
@@ -260,18 +271,14 @@ document.addEventListener('DOMContentLoaded', () => {
     micButton.addEventListener('click', handleMicClick);
 
     // --- Subscriptions & Initial Load ---
-    let initialVoiceCheckDone = false;
-    const voiceUnsubscribe = room.collection('voice_v1').subscribe(newVoices => {
+    let initialSetupDone = false;
+    room.collection('voice_v1').subscribe(newVoices => {
         voices = newVoices;
         renderVoices();
 
-        if (!initialVoiceCheckDone) {
-            initialVoiceCheckDone = true; 
+        if (!initialSetupDone) {
+            initialSetupDone = true; 
             setupInitialVoices(newVoices);
-            // We can unsubscribe if we only want to run setup once per page load,
-            // but keeping it subscribed ensures the UI stays live if another user adds a voice.
-            // For this app, unsubscribing is fine as voices are static.
-            // voiceUnsubscribe();
         }
     });
 
