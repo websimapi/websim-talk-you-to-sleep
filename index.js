@@ -1,88 +1,135 @@
-const { useState, useEffect, useSyncExternalStore, useRef, useCallback } = React;
-const ClipLoader = window.ReactSpinners && window.ReactSpinners.ClipLoader;
+document.addEventListener('DOMContentLoaded', () => {
+    const room = new WebsimSocket();
 
-const room = new WebsimSocket();
+    // --- DOM Elements ---
+    const voiceSelector = document.querySelector('.voice-selector');
+    const messageContainer = document.querySelector('.message-container');
+    const chatArea = document.querySelector('.chat-area');
+    const statusText = document.getElementById('status-text');
+    const statusLoader = document.querySelector('.status .loader');
+    const userInput = document.getElementById('user-input');
+    const micButton = document.getElementById('mic-button');
+    const sendButton = document.getElementById('send-button');
 
-// --- Initial Voice Setup ---
-const INITIAL_VOICES = [
-    { name: 'Soothe', file: 'voice_sample_1.mp3' },
-    { name: 'Whisper', file: 'voice_sample_2.mp3' },
-    { name: 'Calm', file: 'voice_sample_3.mp3' },
-];
+    // --- State ---
+    let voices = [];
+    let messages = [];
+    let selectedVoice = null;
+    let isLoading = false;
+    let isListening = false;
+    let currentStatus = "Select a voice to begin.";
 
-async function setupInitialVoices() {
-    const voices = room.collection('voice_v1').getList();
-    if (voices.length >= INITIAL_VOICES.length) {
-        console.log("Voices already initialized.");
-        return;
-    }
-    console.log("Initializing voices...");
-    for (const voice of INITIAL_VOICES) {
-        const existing = voices.find(v => v.name === voice.name);
-        if (!existing) {
-            try {
-                const response = await fetch(voice.file);
-                const blob = await response.blob();
-                const file = new File([blob], voice.file, { type: blob.type });
-                const url = await websim.upload(file);
-                await room.collection('voice_v1').create({ name: voice.name, url });
-                console.log(`Created voice: ${voice.name}`);
-            } catch (error) {
-                console.error(`Failed to initialize voice ${voice.name}:`, error);
+    // --- Audio & Intervals ---
+    let intervalRef = null;
+    let audioRef = null;
+    let recognitionRef = null;
+
+    // --- Render Functions ---
+    const renderVoices = () => {
+        voiceSelector.innerHTML = '';
+        if (voices.length === 0) {
+            voiceSelector.innerHTML = '<div class="loader"></div>';
+            return;
+        }
+        voices.forEach(voice => {
+            const button = document.createElement('button');
+            button.className = 'voice-button';
+            button.textContent = voice.name;
+            button.dataset.voiceId = voice.id;
+            if (selectedVoice && selectedVoice.id === voice.id) {
+                button.classList.add('selected');
             }
-        }
-    }
-}
-setupInitialVoices();
+            button.addEventListener('click', () => startTalking(voice));
+            voiceSelector.appendChild(button);
+        });
+    };
 
-// --- Main App Component ---
-function App() {
-    const voices = useSyncExternalStore(room.collection('voice_v1').subscribe, room.collection('voice_v1').getList);
-    const messages = useSyncExternalStore(room.collection('message_v1').subscribe, room.collection('message_v1').getList);
-    
-    const [selectedVoice, setSelectedVoice] = useState(null);
-    const [userInput, setUserInput] = useState('');
-    const [isLoading, setIsLoading] = useState(false);
-    const [status, setStatus] = useState("Select a voice to begin.");
-    const [isListening, setIsListening] = useState(false);
+    const renderMessages = () => {
+        messageContainer.innerHTML = '';
+        const sortedMessages = [...messages].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+        sortedMessages.forEach(msg => {
+            const msgDiv = document.createElement('div');
+            msgDiv.className = `message ${msg.role}`;
+            msgDiv.textContent = msg.text;
+            messageContainer.appendChild(msgDiv);
+        });
+        chatArea.scrollTop = chatArea.scrollHeight;
+    };
 
-    const intervalRef = useRef(null);
-    const audioRef = useRef(null);
-    const chatAreaRef = useRef(null);
-    const recognitionRef = useRef(null);
+    const updateStatus = (newStatus, loading) => {
+        isLoading = loading;
+        currentStatus = newStatus;
 
-    const stopTalking = useCallback(() => {
-        if (intervalRef.current) {
-            clearInterval(intervalRef.current);
-            intervalRef.current = null;
-        }
-        if (audioRef.current) {
-            audioRef.current.pause();
-            audioRef.current = null;
-        }
-        setStatus("Paused. Select a voice to resume.");
-    }, []);
-    
-    useEffect(() => {
-        // Cleanup on unmount
-        return () => {
-            stopTalking();
-            if(recognitionRef.current) {
-                recognitionRef.current.stop();
-            }
-        };
-    }, [stopTalking]);
-
-    const generateAndPlayResponse = useCallback(async (isUserInitiated = false) => {
-        if (isLoading) return;
-        setIsLoading(true);
-        setStatus("Thinking...");
+        statusText.textContent = currentStatus;
+        statusLoader.style.display = isLoading ? 'block' : 'none';
         
-        let lastUserMessage = null;
-        if(isUserInitiated) {
-            const userMessages = messages.filter(m => m.role === 'user').sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-            lastUserMessage = userMessages[0] || null;
+        userInput.disabled = !selectedVoice || isLoading;
+        sendButton.disabled = !selectedVoice || isLoading || !userInput.value.trim();
+        micButton.disabled = !selectedVoice || isLoading;
+
+        if (isListening) {
+            micButton.classList.add('listening');
+            micButton.textContent = '...';
+        } else {
+            micButton.classList.remove('listening');
+            micButton.textContent = '🎤';
         }
+    };
+    
+    userInput.addEventListener('input', () => {
+       sendButton.disabled = !selectedVoice || isLoading || !userInput.value.trim();
+    });
+
+    // --- Initial Voice Setup ---
+    const INITIAL_VOICES = [
+        { name: 'Soothe', file: '/voice_sample_1.mp3' },
+        { name: 'Whisper', file: '/voice_sample_2.mp3' },
+        { name: 'Calm', file: '/voice_sample_3.mp3' },
+    ];
+
+    async function setupInitialVoices() {
+        const existingVoices = room.collection('voice_v1').getList();
+        if (existingVoices.length >= INITIAL_VOICES.length) {
+            console.log("Voices already initialized.");
+            return;
+        }
+        console.log("Initializing voices...");
+        for (const voice of INITIAL_VOICES) {
+            const existing = existingVoices.find(v => v.name === voice.name);
+            if (!existing) {
+                try {
+                    const response = await fetch(voice.file);
+                    const blob = await response.blob();
+                    const file = new File([blob], voice.file.split('/').pop(), { type: blob.type });
+                    const url = await websim.upload(file);
+                    await room.collection('voice_v1').create({ name: voice.name, url });
+                    console.log(`Created voice: ${voice.name}`);
+                } catch (error) {
+                    console.error(`Failed to initialize voice ${voice.name}:`, error);
+                }
+            }
+        }
+    }
+
+    // --- Core Logic ---
+    const stopTalking = () => {
+        if (intervalRef) {
+            clearInterval(intervalRef);
+            intervalRef = null;
+        }
+        if (audioRef) {
+            audioRef.pause();
+            audioRef = null;
+        }
+        if (recognitionRef) {
+            recognitionRef.stop();
+        }
+        updateStatus("Paused. Select a voice to resume.", false);
+    };
+
+    const generateAndPlayResponse = async (isUserInitiated = false) => {
+        if (isLoading) return;
+        updateStatus("Thinking...", true);
 
         const systemPrompt = `You are a gentle, soothing AI assistant. Your purpose is to talk someone to sleep.
 - Your voice is very soft and calm.
@@ -109,52 +156,53 @@ function App() {
             
             await room.collection('message_v1').create({ role: 'ai', text: textResponse });
             
-            setStatus("Generating audio...");
+            updateStatus("Generating audio...", true);
             const ttsResult = await websim.textToSpeech({
                 text: textResponse,
                 voice_sample: selectedVoice.url,
             });
 
-            audioRef.current = new Audio(ttsResult.url);
-            audioRef.current.play();
-            setStatus("Speaking...");
-            audioRef.current.onended = () => {
-                if(intervalRef.current) setStatus("Quietly waiting...");
+            audioRef = new Audio(ttsResult.url);
+            audioRef.play();
+            updateStatus("Speaking...", true);
+            audioRef.onended = () => {
+                if (intervalRef) {
+                    updateStatus("Quietly waiting...", false);
+                }
             };
+            audioRef.onerror = () => {
+                 updateStatus("Error playing audio.", false);
+            }
 
         } catch (error) {
             console.error("Error in generation loop:", error);
-            setStatus("An error occurred. Please try again.");
-        } finally {
-            setIsLoading(false);
+            updateStatus("An error occurred. Please try again.", false);
         }
-    }, [messages, isLoading, selectedVoice]);
+    };
 
-    const startTalking = useCallback((voice) => {
+    const startTalking = (voice) => {
         stopTalking();
-        setSelectedVoice(voice);
-        setStatus("Starting session...");
+        selectedVoice = voice;
+        renderVoices(); // Re-render to show selection
+        updateStatus("Starting session...", true);
         
-        // Initial message
         setTimeout(() => generateAndPlayResponse(false), 1000);
 
-        // Set up interval
-        intervalRef.current = setInterval(() => {
+        intervalRef = setInterval(() => {
             generateAndPlayResponse(false);
         }, 15000);
-    }, [stopTalking, generateAndPlayResponse]);
+    };
     
     const handleSend = async () => {
-        if (!userInput.trim() || !selectedVoice) return;
-        const text = userInput;
-        setUserInput('');
+        const text = userInput.value.trim();
+        if (!text || !selectedVoice || isLoading) return;
+        
+        userInput.value = '';
         await room.collection('message_v1').create({ role: 'user', text });
-        // Immediately trigger a response instead of waiting for the interval
-        if (intervalRef.current) {
-            clearInterval(intervalRef.current);
-        }
+        
+        if (intervalRef) clearInterval(intervalRef);
         generateAndPlayResponse(true);
-        intervalRef.current = setInterval(() => {
+        intervalRef = setInterval(() => {
             generateAndPlayResponse(false);
         }, 15000);
     };
@@ -164,111 +212,67 @@ function App() {
             alert("Speech recognition is not supported in your browser.");
             return;
         }
-        if (!selectedVoice) {
-            alert("Please select a voice first.");
-            return;
-        }
 
         if (isListening) {
-            recognitionRef.current.stop();
-            setIsListening(false);
+            recognitionRef.stop();
             return;
         }
 
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-        recognitionRef.current = new SpeechRecognition();
-        recognitionRef.current.continuous = false;
-        recognitionRef.current.interimResults = false;
-        recognitionRef.current.lang = 'en-US';
+        recognitionRef = new SpeechRecognition();
+        recognitionRef.continuous = false;
+        recognitionRef.interimResults = false;
+        recognitionRef.lang = 'en-US';
 
-        recognitionRef.current.onstart = () => {
-            setIsListening(true);
-            setStatus("Listening...");
+        recognitionRef.onstart = () => {
+            isListening = true;
+            updateStatus("Listening...", true);
         };
         
-        recognitionRef.current.onresult = (event) => {
+        recognitionRef.onresult = (event) => {
             const transcript = event.results[0][0].transcript;
-            setUserInput(transcript);
-            // Automatically send after successful recognition
             if (transcript.trim()) {
-              room.collection('message_v1').create({ role: 'user', text: transcript }).then(() => {
-                setUserInput('');
-                if (intervalRef.current) clearInterval(intervalRef.current);
-                generateAndPlayResponse(true);
-                intervalRef.current = setInterval(() => generateAndPlayResponse(false), 15000);
-              });
+                room.collection('message_v1').create({ role: 'user', text: transcript }).then(() => {
+                    if (intervalRef) clearInterval(intervalRef);
+                    generateAndPlayResponse(true);
+                    intervalRef = setInterval(() => generateAndPlayResponse(false), 15000);
+                });
             }
         };
 
-        recognitionRef.current.onerror = (event) => {
+        recognitionRef.onerror = (event) => {
             console.error("Speech recognition error", event.error);
-            setStatus(`Mic error: ${event.error}`);
+            updateStatus(`Mic error: ${event.error}`, false);
         };
 
-        recognitionRef.current.onend = () => {
-            setIsListening(false);
-            if(!isLoading) setStatus("Quietly waiting...");
+        recognitionRef.onend = () => {
+            isListening = false;
+            if (!isLoading) {
+                 updateStatus("Quietly waiting...", false);
+            } else {
+                 updateStatus(currentStatus, true); // Keep loading status if something else is happening
+            }
         };
 
-        recognitionRef.current.start();
+        recognitionRef.start();
     };
 
-    const sortedMessages = [...messages].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+    // --- Event Listeners & Subscriptions ---
+    sendButton.addEventListener('click', handleSend);
+    userInput.addEventListener('keypress', (e) => e.key === 'Enter' && handleSend());
+    micButton.addEventListener('click', handleMicClick);
 
-    return (
-        <>
-            <h1>Talk You To Sleep</h1>
-            <h2>Choose a voice to begin your relaxation session</h2>
-            <div className="voice-selector">
-                {voices.length === 0 && <ClipLoader color="#b0c4de" size={20} />}
-                {voices.map(voice => (
-                    <button 
-                        key={voice.id} 
-                        className={`voice-button ${selectedVoice?.id === voice.id ? 'selected' : ''}`}
-                        onClick={() => startTalking(voice)}
-                    >
-                        {voice.name}
-                    </button>
-                ))}
-            </div>
-            
-            <div className="chat-area" ref={chatAreaRef}>
-                 <div className="message-container">
-                    {sortedMessages.map(msg => (
-                        <div key={msg.id} className={`message ${msg.role}`}>
-                            {msg.text}
-                        </div>
-                    ))}
-                </div>
-            </div>
+    room.collection('voice_v1').subscribe(newVoices => {
+        voices = newVoices;
+        renderVoices();
+    });
 
-            <div className="status">
-                {isLoading && <ClipLoader color="#ecf0f1" size={15} />}
-                <span>{status}</span>
-            </div>
+    room.collection('message_v1').subscribe(newMessages => {
+        messages = newMessages;
+        renderMessages();
+    });
 
-            <div className="input-area">
-                <input 
-                    type="text"
-                    value={userInput}
-                    onChange={(e) => setUserInput(e.target.value)}
-                    onKeyPress={(e) => e.key === 'Enter' && handleSend()}
-                    placeholder="You can type here..."
-                    disabled={!selectedVoice || isLoading}
-                />
-                 <button 
-                    className={`mic-button ${isListening ? 'listening' : ''}`}
-                    onClick={handleMicClick}
-                    disabled={!selectedVoice || isLoading}
-                    title="Talk"
-                >
-                    {isListening ? '...' : '🎤'}
-                </button>
-                <button onClick={handleSend} disabled={!selectedVoice || isLoading}>Send</button>
-            </div>
-        </>
-    );
-}
-
-const root = ReactDOM.createRoot(document.getElementById('root'));
-root.render(<App />);
+    // --- Initial Load ---
+    setupInitialVoices();
+    updateStatus(currentStatus, false);
+});

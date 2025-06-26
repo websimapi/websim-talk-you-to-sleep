@@ -18,7 +18,7 @@
       align-items: center;
       min-height: 100vh;
     }
-    #root {
+    #app-container {
       width: 100%;
       max-width: 600px;
       background-color: #1a2938;
@@ -47,6 +47,8 @@
       justify-content: center;
       gap: 15px;
       flex-wrap: wrap;
+      min-height: 48px; /* Room for loader */
+      align-items: center;
     }
     .voice-button {
       background-color: #2c3e50;
@@ -75,7 +77,8 @@
         border-radius: 8px;
         margin-top: 10px;
         display: flex;
-        flex-direction: column-reverse;
+        flex-direction: column;
+        justify-content: flex-end; /* Aligns content to bottom */
     }
     .message-container {
         display: flex;
@@ -127,7 +130,7 @@
       cursor: pointer;
       transition: background-color 0.2s;
     }
-    button:hover {
+    button:hover:not(:disabled) {
       background-color: #5d8ac7;
     }
     button:disabled {
@@ -151,11 +154,47 @@
         align-items: center;
         gap: 8px;
     }
+    /* Simple CSS Loader */
+    .loader {
+      border: 3px solid #34495e;
+      border-top: 3px solid #b0c4de;
+      border-radius: 50%;
+      width: 20px;
+      height: 20px;
+      animation: spin 1s linear infinite;
+    }
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
   </style>
 </head>
 <body>
-  <div id="root"></div>
-  <script type="text/babel" src="index.js"></script>
+  <div id="app-container">
+    <h1>Talk You To Sleep</h1>
+    <h2>Choose a voice to begin your relaxation session</h2>
+    <div class="voice-selector">
+        <div class="loader"></div>
+    </div>
+
+    <div class="chat-area">
+        <div class="message-container">
+            <!-- Messages will be generated here by JS -->
+        </div>
+    </div>
+
+    <div class="status">
+        <div class="loader" style="display: none;"></div>
+        <span id="status-text">Select a voice to begin.</span>
+    </div>
+
+    <div class="input-area">
+        <input type="text" id="user-input" placeholder="You can type here..." disabled>
+        <button id="mic-button" class="mic-button" title="Talk" disabled>🎤</button>
+        <button id="send-button" disabled>Send</button>
+    </div>
+  </div>
+  <script defer src="index.js"></script>
 <script defer src="https://static.cloudflareinsights.com/beacon.min.js/v8c78df7c7c0f484497ecbca7046644da1771523124516" integrity="sha512-8DS7rgIrAmghBFwoOTujcf6D9rXvH8xm8JQ1Ja01h9QX8EzXldiszufYa4IFfKdLUKTTrnSFXLDkUEOTrZQ8Qg==" data-cf-beacon='{"version":"2024.11.0","token":"4c6229722a6346bc8eb5cb0e5eae5d41","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
 </body>
 </html>
