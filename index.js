@@ -87,16 +87,12 @@ document.addEventListener('DOMContentLoaded', () => {
         { name: 'Calm', file: '/voice_sample_3.mp3' },
     ];
 
-    async function setupInitialVoices() {
-        const existingVoices = room.collection('voice_v1').getList();
-        if (existingVoices.length >= INITIAL_VOICES.length) {
-            console.log("Voices already initialized.");
-            return;
-        }
-        console.log("Initializing voices...");
+    async function setupInitialVoices(existingVoices) {
+        console.log("Checking if voices need to be initialized...");
         for (const voice of INITIAL_VOICES) {
             const existing = existingVoices.find(v => v.name === voice.name);
             if (!existing) {
+                console.log(`Initializing voice: ${voice.name}`);
                 try {
                     const response = await fetch(voice.file);
                     const blob = await response.blob();
@@ -109,6 +105,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             }
         }
+        console.log("Voice check complete.");
     }
 
     // --- Core Logic ---
@@ -262,9 +259,20 @@ document.addEventListener('DOMContentLoaded', () => {
     userInput.addEventListener('keypress', (e) => e.key === 'Enter' && handleSend());
     micButton.addEventListener('click', handleMicClick);
 
-    room.collection('voice_v1').subscribe(newVoices => {
+    // --- Subscriptions & Initial Load ---
+    let initialVoiceCheckDone = false;
+    const voiceUnsubscribe = room.collection('voice_v1').subscribe(newVoices => {
         voices = newVoices;
         renderVoices();
+
+        if (!initialVoiceCheckDone) {
+            initialVoiceCheckDone = true; 
+            setupInitialVoices(newVoices);
+            // We can unsubscribe if we only want to run setup once per page load,
+            // but keeping it subscribed ensures the UI stays live if another user adds a voice.
+            // For this app, unsubscribing is fine as voices are static.
+            // voiceUnsubscribe();
+        }
     });
 
     room.collection('message_v1').subscribe(newMessages => {
@@ -272,7 +280,5 @@ document.addEventListener('DOMContentLoaded', () => {
         renderMessages();
     });
 
-    // --- Initial Load ---
-    setupInitialVoices();
     updateStatus(currentStatus, false);
 });
