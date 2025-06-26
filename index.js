@@ -1,5 +1,5 @@
 const { useState, useEffect, useSyncExternalStore, useRef, useCallback } = React;
-const { ClipLoader } = window.ReactSpinners;
+const ClipLoader = window.ReactSpinners?.ClipLoader;
 
 const room = new WebsimSocket();
 
