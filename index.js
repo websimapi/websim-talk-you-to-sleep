@@ -1,5 +1,5 @@
 const { useState, useEffect, useSyncExternalStore, useRef, useCallback } = React;
-const { ClipLoader } = ReactSpinners;
+const { ClipLoader } = window.ReactSpinners;
 
 const room = new WebsimSocket();
 
@@ -220,7 +220,7 @@ function App() {
             <h1>Talk You To Sleep</h1>
             <h2>Choose a voice to begin your relaxation session</h2>
             <div className="voice-selector">
-                {voices.length === 0 && <div className="spinner"></div>}
+                {voices.length === 0 && <ClipLoader color="#b0c4de" size={20} />}
                 {voices.map(voice => (
                     <button 
                         key={voice.id} 
@@ -243,7 +243,7 @@ function App() {
             </div>
 
             <div className="status">
-                {isLoading && <div className="spinner"></div>}
+                {isLoading && <ClipLoader color="#ecf0f1" size={15} />}
                 <span>{status}</span>
             </div>
 
